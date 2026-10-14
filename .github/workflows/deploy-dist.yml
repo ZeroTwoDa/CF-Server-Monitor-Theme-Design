@@ -1,0 +1,64 @@
+name: Build theme to dist
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: theme-dist
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+
+      - name: Publish build to dist
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SOURCE_SUBJECT="$(git log -1 --pretty=%s)"
+          mkdir -p "$RUNNER_TEMP/dist-work"
+          cp -R dist/. "$RUNNER_TEMP/dist-work/"
+
+          git fetch origin dist:dist || true
+
+          if git show-ref --verify --quiet refs/remotes/origin/dist; then
+            git worktree add "$RUNNER_TEMP/dist-repo" origin/dist
+          else
+            git worktree add --detach "$RUNNER_TEMP/dist-repo"
+            git -C "$RUNNER_TEMP/dist-repo" switch --orphan dist
+            git -C "$RUNNER_TEMP/dist-repo" rm -rf . || true
+          fi
+
+          rm -rf "$RUNNER_TEMP/dist-repo"/*
+          cp -R "$RUNNER_TEMP/dist-work/." "$RUNNER_TEMP/dist-repo/"
+
+          git -C "$RUNNER_TEMP/dist-repo" add -A
+          git -C "$RUNNER_TEMP/dist-repo" \
+            -c user.name="github-actions[bot]" \
+            -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -m "$SOURCE_SUBJECT" || true
+
+          git -C "$RUNNER_TEMP/dist-repo" push origin HEAD:dist
